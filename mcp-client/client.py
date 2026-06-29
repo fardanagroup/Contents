@@ -10,6 +10,7 @@ Example:
 """
 
 import asyncio
+import os
 import sys
 from typing import Any
 
@@ -19,6 +20,14 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 load_dotenv()
+
+if not os.environ.get("ANTHROPIC_API_KEY"):
+    print(
+        "Error: ANTHROPIC_API_KEY is not set.\n"
+        "Copy .env.example to .env and add your Anthropic API key.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 
 async def run(server_script_path: str) -> None:
@@ -88,7 +97,7 @@ async def run(server_script_path: str) -> None:
                 while True:
                     response = anthropic.messages.create(
                         model="claude-opus-4-5",
-                        max_tokens=8096,
+                        max_tokens=8192,
                         tools=tools,
                         messages=messages,
                     )

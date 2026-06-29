@@ -82,7 +82,7 @@ The client will:
 
 ---
 
-## Thesis-review use-case
+## Thesis review use-case
 
 This client was built to support academic document review (skripsi FEB
 Universitas Airlangga). Pair it with an MCP server that exposes file-reading
