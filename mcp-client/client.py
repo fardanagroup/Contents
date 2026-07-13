@@ -144,7 +144,9 @@ class MCPClient:
     async def process_query(self, query: str) -> str:
         """Send a user query, execute requested tools, and return the final reply."""
         if not self.session:
-            raise RuntimeError("Client session not initialized. Call connect_to_server() first.")
+            raise RuntimeError(
+                "Client session not initialized. Ensure connect_to_server() has been called first."
+            )
 
         self.messages.append({"role": "user", "content": query})
 
