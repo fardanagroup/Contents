@@ -88,6 +88,8 @@ def prompt_user() -> str:
 
 
 class MCPClient:
+    """Interactive MCP client with a styled terminal chat interface."""
+
     def __init__(self) -> None:
         self.model = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest")
         self.session: ClientSession | None = None
@@ -97,6 +99,7 @@ class MCPClient:
         self.tools: list[dict[str, Any]] = []
 
     async def connect_to_server(self, command: str, args: list[str]) -> None:
+        """Start an MCP stdio server process and initialize the client session."""
         server_params = StdioServerParameters(command=command, args=args, env=None)
 
         stdio_transport = await self.exit_stack.enter_async_context(
@@ -130,6 +133,7 @@ class MCPClient:
         print_info(f"Loaded {len(self.tools)} tool(s): {tool_names}")
 
     async def process_query(self, query: str) -> str:
+        """Send a user query, execute requested tools, and return the final reply."""
         if not self.session:
             raise RuntimeError("Client session is not initialized.")
 
