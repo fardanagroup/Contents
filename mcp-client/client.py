@@ -80,6 +80,12 @@ def print_tool_result(result: str) -> None:
         print(style(GREEN, f"  │ {line}"))
 
 
+def stringify_result_block(block: Any) -> str:
+    if getattr(block, "type", None) == "text":
+        return block.text
+    return str(block)
+
+
 def prompt_user() -> str:
     try:
         return input(style(MAGENTA + BOLD, "\n  You ❯ "))
@@ -129,9 +135,10 @@ class MCPClient:
             for tool in response.tools
         ]
 
-        tool_names = ", ".join(style(YELLOW, tool["name"]) for tool in self.tools) or style(
-            DIM, "none"
-        )
+        if self.tools:
+            tool_names = ", ".join(style(YELLOW, tool["name"]) for tool in self.tools)
+        else:
+            tool_names = style(DIM, "none")
         print_info(f"Loaded {len(self.tools)} tool(s): {tool_names}")
 
     async def process_query(self, query: str) -> str:
@@ -171,8 +178,7 @@ class MCPClient:
                 print_tool_call(tool_use.name, tool_use.input)
                 result = await self.session.call_tool(tool_use.name, tool_use.input)
                 result_text = "\n".join(
-                    block.text if hasattr(block, "text") else str(block)
-                    for block in result.content
+                    stringify_result_block(block) for block in result.content
                 )
                 print_tool_result(result_text)
                 tool_results.append(

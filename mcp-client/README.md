@@ -8,6 +8,7 @@ A small terminal MCP client with a refreshed, color-coded console experience.
 - Distinct colors for prompts, assistant replies, tool calls, and tool output
 - Built-in `/tools`, `/clear`, and `/exit` commands
 - Reads `ANTHROPIC_API_KEY` from your environment or `.env`
+- Uses `claude-3-5-sonnet-latest` by default and lets you override it with `ANTHROPIC_MODEL`
 
 ## Setup
 
