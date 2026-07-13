@@ -144,7 +144,9 @@ class MCPClient:
     async def process_query(self, query: str) -> str:
         """Send a user query, execute requested tools, and return the final reply."""
         if not self.session:
-            raise RuntimeError("Client is not connected to an MCP server.")
+            raise RuntimeError(
+                "Client is not connected to an MCP server. Start the client with a server command before sending queries."
+            )
 
         self.messages.append({"role": "user", "content": query})
 
@@ -226,7 +228,13 @@ class MCPClient:
 
 async def main() -> None:
     if len(sys.argv) < 2:
-        print(style(RED, "\nUsage: python client.py <server_command> [server_args...]\n"))
+        print(
+            style(
+                RED,
+                "\nUsage: python client.py <server_command> [server_args...]\n"
+                "Example: python client.py python /path/to/server.py\n",
+            )
+        )
         raise SystemExit(1)
 
     client = MCPClient()
