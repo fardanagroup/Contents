@@ -90,6 +90,8 @@ def prompt_user() -> str:
 class MCPClient:
     """Interactive MCP client with a styled terminal chat interface."""
 
+    MAX_TOKENS = 4096
+
     def __init__(self) -> None:
         self.model = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest")
         self.session: ClientSession | None = None
@@ -135,14 +137,14 @@ class MCPClient:
     async def process_query(self, query: str) -> str:
         """Send a user query, execute requested tools, and return the final reply."""
         if not self.session:
-            raise RuntimeError("Client session is not initialized.")
+            raise RuntimeError("Client session not initialized. Call connect_to_server() first.")
 
         self.messages.append({"role": "user", "content": query})
 
         while True:
             response = self.anthropic.messages.create(
                 model=self.model,
-                max_tokens=4096,
+                max_tokens=self.MAX_TOKENS,
                 messages=self.messages,
                 tools=self.tools,
             )
