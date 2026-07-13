@@ -145,7 +145,7 @@ class MCPClient:
         """Send a user query, execute requested tools, and return the final reply."""
         if not self.session:
             raise RuntimeError(
-                "Client is not connected to an MCP server. Start the client with a server command before sending queries."
+                "Not connected to MCP server. Provide a server command when starting the client."
             )
 
         self.messages.append({"role": "user", "content": query})
