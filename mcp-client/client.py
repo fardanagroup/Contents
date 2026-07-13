@@ -182,7 +182,7 @@ class MCPClient:
         if self.tools:
             print_rule("tools")
             for tool in self.tools:
-                description = tool["description"][:60] or "No description provided."
+                description = tool["description"] or "No description provided."
                 print(style(YELLOW, f"  • {tool['name']:<20}") + style(DIM, description))
         print_rule()
         print_info("Type /tools to refresh tools, /clear to reset, or /exit to quit.")
