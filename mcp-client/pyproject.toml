@@ -1,7 +1,7 @@
 [project]
 name = "mcp-client"
 version = "0.1.0"
-description = "Add your description here"
+description = "A styled terminal client for connecting to MCP servers"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

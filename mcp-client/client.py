@@ -124,7 +124,9 @@ class MCPClient:
             for tool in response.tools
         ]
 
-        tool_names = ", ".join(style(YELLOW, tool["name"]) for tool in self.tools) or "none"
+        tool_names = ", ".join(style(YELLOW, tool["name"]) for tool in self.tools) or style(
+            DIM, "none"
+        )
         print_info(f"Loaded {len(self.tools)} tool(s): {tool_names}")
 
     async def process_query(self, query: str) -> str:
