@@ -1,134 +1,180 @@
-"""
-Claude MCP Connector client.
+"""An interactive MCP client backed by Claude.
 
-Calls the Claude Messages API with a remote MCP server attached via the
-MCP connector (beta).  Anthropic makes the MCP connection server-side, so
-there is nothing extra to run locally.
+Connects to a single MCP server over stdio, exposes that server's tools to
+Claude, and runs a chat loop where Claude can call the tools to answer your
+questions.
 
-Two request pieces are required and must share the same server name:
-  * mcp_servers  — connection descriptor {type, url, name, [authorization_token]}
-  * tools        — an mcp_toolset entry that references the server by name
+Usage:
+    uv run client.py <path/to/server.py>
+    uv run client.py <command> [args...]
 
-Configuration (via environment variables or a .env file):
-  ANTHROPIC_API_KEY  — required; your Anthropic API key
-  MCP_SERVER_URL     — remote MCP server endpoint (Streamable HTTP / SSE)
-  MCP_SERVER_TOKEN   — optional bearer token forwarded to the MCP server
-
-Basic usage:
-  from client import ClaudeMcpService
-  result = ClaudeMcpService().call("What tools can you use?")
-  print(result.text)
-
-CLI usage:
-  python client.py "What tools can you use?"
+Examples:
+    uv run client.py ../weather/server.py
+    uv run client.py npx -y @modelcontextprotocol/server-filesystem /tmp
 """
 
-from __future__ import annotations
-
+import asyncio
 import os
+import shutil
 import sys
-from dataclasses import dataclass, field
-from typing import Any
+from contextlib import AsyncExitStack
 
-import anthropic
+from anthropic import Anthropic
 from dotenv import load_dotenv
+from mcp import ClientSession, StdioServerParameters, types
+from mcp.client.stdio import stdio_client
 
 load_dotenv()
 
-DEFAULT_MODEL = "claude-opus-4-5-20251101"
-MCP_BETA = "mcp-client-2025-11-20"
-SERVER_NAME = "example-mcp"
+MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5")
+MAX_TOKENS = int(os.getenv("ANTHROPIC_MAX_TOKENS", "1000"))
 
 
-@dataclass
-class Result:
-    text: str
-    stop_reason: str
-    message: Any = field(repr=False)
+class MCPClient:
+    """Bridges a stdio MCP server and the Anthropic Messages API."""
 
+    def __init__(self) -> None:
+        self.session: ClientSession | None = None
+        self._stack = AsyncExitStack()
+        self.anthropic = Anthropic()
 
-class ClaudeMcpService:
-    """Wraps the Claude beta Messages API with a remote MCP server attached."""
-
-    def __init__(
-        self,
-        *,
-        api_key: str | None = None,
-        server_url: str | None = None,
-        server_token: str | None = None,
-        allowed_tools: list[str] | None = None,
-        model: str = DEFAULT_MODEL,
-    ) -> None:
-        self._client = anthropic.Anthropic(
-            api_key=api_key or os.environ.get("ANTHROPIC_API_KEY")
-        )
-        self._server_url = (
-            server_url if server_url is not None else os.environ.get("MCP_SERVER_URL", "")
-        )
-        self._server_token = (
-            server_token if server_token is not None else os.environ.get("MCP_SERVER_TOKEN", "")
-        )
-        self._allowed_tools = allowed_tools
-        self._model = model
-
-    def call(self, prompt: str, *, max_tokens: int = 16_000) -> Result:
-        """Send a single user message and return the assistant's response."""
-        if not self._server_url:
-            raise ValueError("MCP_SERVER_URL is not configured")
-
-        message = self._client.beta.messages.create(
-            model=self._model,
-            max_tokens=max_tokens,
-            betas=[MCP_BETA],
-            mcp_servers=[self._mcp_server()],
-            tools=[self._mcp_toolset()],
-            messages=[{"role": "user", "content": prompt}],
+    async def connect(self, command: str, args: list[str]) -> None:
+        """Launch the server process and start an MCP session with it."""
+        server_params = StdioServerParameters(
+            command=command,
+            args=args,
+            env=None,
         )
 
-        return Result(
-            text=self._extract_text(message),
-            stop_reason=message.stop_reason,
-            message=message,
+        stdio, write = await self._stack.enter_async_context(
+            stdio_client(server_params)
         )
+        self.session = await self._stack.enter_async_context(
+            ClientSession(stdio, write)
+        )
+        await self.session.initialize()
 
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
+        response = await self.session.list_tools()
+        tool_names = ", ".join(tool.name for tool in response.tools) or "(none)"
+        print(f"Connected. Available tools: {tool_names}")
 
-    def _mcp_server(self) -> dict:
-        server: dict = {"type": "url", "url": self._server_url, "name": SERVER_NAME}
-        if self._server_token:
-            server["authorization_token"] = self._server_token
-        return server
-
-    def _mcp_toolset(self) -> dict:
-        toolset: dict = {"type": "mcp_toolset", "mcp_server_name": SERVER_NAME}
-        if self._allowed_tools is not None:
-            toolset["default_config"] = {"enabled": False}
-            toolset["configs"] = [
-                {"name": name, "enabled": True} for name in self._allowed_tools
-            ]
-        return toolset
+    async def _available_tools(self) -> list[dict]:
+        """Describe the server's tools in the shape the Anthropic API expects."""
+        assert self.session is not None
+        response = await self.session.list_tools()
+        return [
+            {
+                "name": tool.name,
+                "description": tool.description or "",
+                "input_schema": tool.inputSchema,
+            }
+            for tool in response.tools
+        ]
 
     @staticmethod
-    def _extract_text(message: Any) -> str:
-        return "\n".join(
-            block.text
-            for block in message.content
-            if getattr(block, "type", None) == "text"
-        )
+    def _tool_result_text(result: types.CallToolResult) -> str:
+        """Flatten an MCP tool result into text for Claude."""
+        parts: list[str] = []
+        for block in result.content:
+            if isinstance(block, types.TextContent):
+                parts.append(block.text)
+            else:
+                parts.append(f"[{block.type} content]")
+        return "\n".join(parts)
+
+    async def process_query(self, query: str) -> str:
+        """Run one query through Claude, executing any tool calls it requests."""
+        assert self.session is not None
+        tools = await self._available_tools()
+        messages: list[dict] = [{"role": "user", "content": query}]
+        output: list[str] = []
+
+        while True:
+            response = self.anthropic.messages.create(
+                model=MODEL,
+                max_tokens=MAX_TOKENS,
+                messages=messages,
+                tools=tools,
+            )
+
+            assistant_content = []
+            tool_uses = []
+            for block in response.content:
+                assistant_content.append(block)
+                if block.type == "text":
+                    output.append(block.text)
+                elif block.type == "tool_use":
+                    tool_uses.append(block)
+
+            messages.append({"role": "assistant", "content": assistant_content})
+
+            if not tool_uses:
+                break
+
+            tool_results = []
+            for tool_use in tool_uses:
+                output.append(f"[calling tool {tool_use.name} with {tool_use.input}]")
+                result = await self.session.call_tool(tool_use.name, tool_use.input)
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_use.id,
+                        "content": self._tool_result_text(result),
+                        "is_error": bool(result.isError),
+                    }
+                )
+
+            messages.append({"role": "user", "content": tool_results})
+
+        return "\n".join(output)
+
+    async def chat_loop(self) -> None:
+        """Read queries from stdin until the user quits."""
+        print("MCP client ready. Type your queries, or 'quit' to exit.")
+        while True:
+            try:
+                query = input("\n> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+            if query.lower() in {"quit", "exit"}:
+                break
+            if not query:
+                continue
+            try:
+                print("\n" + await self.process_query(query))
+            except Exception as exc:  # noqa: BLE001 - surface any error to the user
+                print(f"\nError: {exc}")
+
+    async def aclose(self) -> None:
+        await self._stack.aclose()
 
 
-def main() -> None:
-    prompt = (
-        " ".join(sys.argv[1:])
-        or "List the tools you have access to and what each one does."
-    )
-    result = ClaudeMcpService().call(prompt)
-    print(f"stop_reason: {result.stop_reason}")
-    print("---")
-    print(result.text)
+async def main() -> None:
+    if len(sys.argv) < 2:
+        print(__doc__)
+        sys.exit(1)
+
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        print("Error: ANTHROPIC_API_KEY is not set (put it in a .env file).")
+        sys.exit(1)
+
+    # First arg is the server: either a script path or an executable command.
+    command, *args = sys.argv[1:]
+    if command.endswith(".py"):
+        args = [command, *args]
+        command = sys.executable
+    elif shutil.which(command) is None:
+        print(f"Error: cannot find command '{command}' on PATH.")
+        sys.exit(1)
+
+    client = MCPClient()
+    try:
+        await client.connect(command, args)
+        await client.chat_loop()
+    finally:
+        await client.aclose()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
